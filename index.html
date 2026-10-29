@@ -28,6 +28,7 @@ button.chip{cursor:pointer}
 </style></head><body><main>
 <button class="gear" id="gear" title="Settings">⚙️</button>
 <h1>Lost &amp; Found Log</h1><p class="sub">Snap where you put it. Find it later.</p>
+<div id="byok" class="empty" style="display:none;padding:10px 12px;margin:0 0 12px;background:var(--chip);border-radius:12px;text-align:left;font-size:14px">✨ Want photos auto-labelled? Bring your own API key (Anthropic or Google AI Studio) — it uses <b>your</b> key, never anyone else’s. <button class="chip" id="byokgo" style="color:var(--acc);font-weight:600">Add key</button><button class="chip" id="byokno">Not now</button></div>
 <input type="search" id="q" placeholder="Search item or place — “passport”, “bedroom drawer”">
 <div id="list" class="grid"></div>
 <div id="empty" class="empty" hidden>Nothing logged yet.<br>Tap “Put something away” and take a photo.</div>
@@ -94,21 +95,32 @@ function shrink(file,max){return new Promise((res,rej)=>{const im=new Image(),u=
     c.width=Math.round(im.width*s);c.height=Math.round(im.height*s);c.getContext("2d").drawImage(im,0,0,c.width,c.height);
     URL.revokeObjectURL(u);res(c.toDataURL("image/jpeg",.78))};im.onerror=rej;im.src=u})}
 
+const PROMPT='This photo shows where someone just put down a household item. Reply ONLY with JSON: {"item":"short name of the main object being stored, or empty if unclear","place":"concise location like Bedroom, top drawer, left side","tags":["room","furniture","position"]}';
+const cfg=()=>({prov:localStorage.getItem("lf_prov")||"anthropic",key:localStorage.getItem("lf_key")||"",model:localStorage.getItem("lf_model")||""});
+const DEFAULT_MODEL={anthropic:"claude-sonnet-5-5",google:"gemini-flash-latest"};
 async function autoLabel(dataUrl){
-  const key=localStorage.getItem("lf_key");if(!key)return null;
-  const r=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{
-    "content-type":"application/json","x-api-key":key,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-    body:JSON.stringify({model:"claude-sonnet-5-5",max_tokens:300,messages:[{role:"user",content:[
-      {type:"image",source:{type:"base64",media_type:"image/jpeg",data:dataUrl.split(",")[1]}},
-      {type:"text",text:'This photo shows where someone just put down a household item. Reply ONLY with JSON: {"item":"short name of the main object being stored, or empty if unclear","place":"concise location like Bedroom, top drawer, left side","tags":["room","furniture","position"]}'}]}]})});
-  if(!r.ok)throw new Error(r.status);
-  const t=(await r.json()).content.map(c=>c.text||"").join("");
+  const c=cfg();if(!c.key)return null;
+  const b64=dataUrl.split(",")[1],model=c.model||DEFAULT_MODEL[c.prov];let t;
+  if(c.prov==="google"){
+    const r=await fetch("https://generativelanguage.googleapis.com/v1beta/models/"+encodeURIComponent(model)+":generateContent",{method:"POST",
+      headers:{"content-type":"application/json","x-goog-api-key":c.key},
+      body:JSON.stringify({contents:[{parts:[{inline_data:{mime_type:"image/jpeg",data:b64}},{text:PROMPT}]}],generationConfig:{responseMimeType:"application/json"}})});
+    if(!r.ok)throw new Error(r.status);
+    t=((await r.json()).candidates?.[0]?.content?.parts||[]).map(p=>p.text||"").join("");
+  }else{
+    const r=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{
+      "content-type":"application/json","x-api-key":c.key,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
+      body:JSON.stringify({model,max_tokens:300,messages:[{role:"user",content:[
+        {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},{type:"text",text:PROMPT}]}]})});
+    if(!r.ok)throw new Error(r.status);
+    t=(await r.json()).content.map(x=>x.text||"").join("");
+  }
   return JSON.parse(t.replace(/```json|```/g,"").trim());
 }
 
 $("file").onchange=async e=>{
   const f=e.target.files[0];e.target.value="";if(!f)return;
-  const img=await shrink(f,1000),hasKey=!!localStorage.getItem("lf_key");
+  const img=await shrink(f,1000),hasKey=!!cfg().key;
   const places=[...new Set(items.map(i=>i.place).filter(Boolean))].slice(0,6);
   sheet(`<h2 style="margin:0 0 8px">Where is it going?</h2><img class="hero" src="${img}" alt="">
   <p id="st" style="color:var(--mute);font-size:14px;margin:8px 0 0">${hasKey?"Reading the photo…":"Name it and say where. (Add an API key in ⚙️ for auto-labelling.)"}</p>
@@ -135,14 +147,21 @@ $("file").onchange=async e=>{
 /* ---------- settings / backup ---------- */
 $("gear").onclick=()=>{
   sheet(`<h2 style="margin:0 0 8px">Settings</h2>
-  <label>Anthropic API key (optional, for auto-labelling photos)</label>
-  <input type="password" id="k" value="${esc(localStorage.getItem("lf_key")||"")}" placeholder="sk-ant-…">
-  <p style="color:var(--mute);font-size:13px">Stored only in this browser and sent only to api.anthropic.com. Use a key with a spend limit. Without a key, everything else still works.</p>
+  <label>Auto-label provider (optional)</label>
+  <select id="pv" style="width:100%;padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--ink);font:inherit"><option value="anthropic">Anthropic (Claude) — console.anthropic.com</option><option value="google">Google AI Studio (Gemini) — aistudio.google.com/apikey</option></select>
+  <label>API key</label><input type="password" id="k" placeholder="Paste your key">
+  <label>Model (leave blank for default)</label><input type="text" id="m" placeholder="">
+  <p style="color:var(--mute);font-size:13px">Bring your own key: calls are billed to your key only. It is stored in this browser and sent only to the provider you pick. Use a key with a spend limit. Without a key, everything else still works.</p>
   <label>Backup &amp; sharing</label>
   <p style="color:var(--mute);font-size:13px;margin:0">Data lives on this device. To share with your household, export a file and import it on another device (items are merged).</p>
   <div class="row"><button class="btn" id="ks">Save key</button><button class="btn alt" id="ex">Export</button><button class="btn alt" id="im">Import</button><button class="btn alt" id="x">Close</button></div>`);
   $("x").onclick=close;
-  $("ks").onclick=()=>{const v=$("k").value.trim();v?localStorage.setItem("lf_key",v):localStorage.removeItem("lf_key");close()};
+  const c=cfg();$("pv").value=c.prov;$("k").value=c.key;$("m").value=c.model;
+  const ph=()=>$("m").placeholder=DEFAULT_MODEL[$("pv").value];ph();$("pv").onchange=ph;
+  $("ks").onclick=()=>{const v=$("k").value.trim();
+    localStorage.setItem("lf_prov",$("pv").value);
+    v?localStorage.setItem("lf_key",v):localStorage.removeItem("lf_key");
+    const m=$("m").value.trim();m?localStorage.setItem("lf_model",m):localStorage.removeItem("lf_model");close()};
   $("ex").onclick=()=>{const a=document.createElement("a");
     a.href=URL.createObjectURL(new Blob([JSON.stringify(items)],{type:"application/json"}));
     a.download="lost-and-found-"+new Date().toISOString().slice(0,10)+".json";a.click()};
@@ -153,5 +172,11 @@ $("imp").onchange=async e=>{
   try{const arr=JSON.parse(await f.text());for(const r of arr)if(r&&r.id&&r.name&&r.img)await put(r);close();reload()}
   catch(x){alert("That file couldn’t be imported.")}
 };
+function byok(){const on=!localStorage.getItem("lf_key")&&!localStorage.getItem("lf_nobyok");$("byok").style.display=on?"block":"none"}
+$("byokgo").onclick=()=>$("gear").click();
+$("byokno").onclick=()=>{localStorage.setItem("lf_nobyok","1");byok()};
+const _close=close;byok();
+$("sheet").addEventListener("transitionend",byok);
+new MutationObserver(byok).observe($("sheet"),{attributes:true});
 reload();
 </script></body></html>
