@@ -2,6 +2,12 @@
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#d9622b">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Lost&Found">
 <title>Lost &amp; Found Log</title>
 <style>
 :root{--bg:#faf7f2;--card:#fff;--ink:#2b2622;--mute:#7a7068;--acc:#d9622b;--line:#e8e0d5;--chip:#f3ebe0}
@@ -179,4 +185,5 @@ const _close=close;byok();
 $("sheet").addEventListener("transitionend",byok);
 new MutationObserver(byok).observe($("sheet"),{attributes:true});
 reload();
+if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(()=>{});
 </script></body></html>
